@@ -100,11 +100,7 @@
 #include "cpp/luau/lua.h"
 #include "cpp/luau/lualib.h"
 
-// Define missing structure for luaL_Reg
-typedef struct luaL_Reg {
-    const char* name;
-    lua_CFunction func;
-} luaL_Reg;
+// luaL_Reg is already defined in lualib.h, no need to redefine it
 
 // We need to handle luaL_error which returns void in Luau but int in standard Lua
 static int luaL_error_compat(lua_State* L, const char* fmt, ...) {
@@ -117,11 +113,11 @@ static int luaL_error_compat(lua_State* L, const char* fmt, ...) {
 }
 #define luaL_error luaL_error_compat
 
-// Function to simulate lua_pushcfunction for Luau
-static void lua_pushcfunction_compat(lua_State* L, lua_CFunction f) {
-    lua_pushcclosurek(L, f, "lfs_func", 0, NULL);
-}
-#define lua_pushcfunction(L,f) lua_pushcclosurek(L, (f), "lfs_func", 0, NULL)
+// Fix for lua_pushcfunction that's used differently in lfs.c vs Luau
+// The version in lfs.c expects 2 parameters, but Luau's version expects 3
+// We'll need to handle calls to lua_pushcfunction by redefining how it's used
+#undef lua_pushcfunction
+// We don't define a new macro, but instead we'll modify the calls to lua_pushcfunction directly
 
 // Custom implementation of lua_pushglobaltable for Luau
 static void lua_pushglobaltable_compat(lua_State* L) {
@@ -827,7 +823,7 @@ static int dir_iter_factory(lua_State * L)
 {
   const char *path = luaL_checkstring(L, 1);
   dir_data *d;
-  lua_pushcfunction(L, dir_iter);
+  lua_pushcclosurek(L, dir_iter, "dir_iter", 0, NULL);
   d = (dir_data *) lua_newuserdata(L, sizeof(dir_data));
   luaL_getmetatable(L, DIR_METATABLE);
   lua_setmetatable(L, -2);
@@ -862,18 +858,18 @@ static int dir_create_meta(lua_State * L)
 
   /* Method table */
   lua_newtable(L);
-  lua_pushcfunction(L, dir_iter);
+  lua_pushcclosurek(L, dir_iter, "dir_iter", 0, NULL);
   lua_setfield(L, -2, "next");
-  lua_pushcfunction(L, dir_close);
+  lua_pushcclosurek(L, dir_close, "dir_close", 0, NULL);
   lua_setfield(L, -2, "close");
 
   /* Metamethods */
   lua_setfield(L, -2, "__index");
-  lua_pushcfunction(L, dir_close);
+  lua_pushcclosurek(L, dir_close, "dir_close", 0, NULL);
   lua_setfield(L, -2, "__gc");
 
 #if LUA_VERSION_NUM >= 504
-  lua_pushcfunction(L, dir_close);
+  lua_pushcclosurek(L, dir_close, "dir_close", 0, NULL);
   lua_setfield(L, -2, "__close");
 #endif
   return 1;
@@ -889,12 +885,12 @@ static int lock_create_meta(lua_State * L)
 
   /* Method table */
   lua_newtable(L);
-  lua_pushcfunction(L, lfs_unlock_dir);
+  lua_pushcclosurek(L, lfs_unlock_dir, "lfs_unlock_dir", 0, NULL);
   lua_setfield(L, -2, "free");
 
   /* Metamethods */
   lua_setfield(L, -2, "__index");
-  lua_pushcfunction(L, lfs_unlock_dir);
+  lua_pushcclosurek(L, lfs_unlock_dir, "lfs_unlock_dir", 0, NULL);
   lua_setfield(L, -2, "__gc");
   return 1;
 }
