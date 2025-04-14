@@ -19,29 +19,59 @@ set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "Build architectures for iOS")
 # Find Lua
 find_package(Lua REQUIRED)
 
-# Find CoreML if available
-find_library(COREML_LIBRARY CoreML)
-find_library(FOUNDATION_LIBRARY Foundation)
-find_library(UIKIT_LIBRARY UIKit)
-find_library(WEBKIT_LIBRARY WebKit)
+# Find required frameworks
+find_library(FOUNDATION_LIBRARY Foundation REQUIRED)
+find_library(UIKIT_LIBRARY UIKit REQUIRED)
+find_library(WEBKIT_LIBRARY WebKit REQUIRED)
+find_library(CORE_GRAPHICS_LIBRARY CoreGraphics REQUIRED)
+find_library(CORE_FOUNDATION_LIBRARY CoreFoundation REQUIRED)
+find_library(JAVASCRIPT_CORE_LIBRARY JavaScriptCore REQUIRED)
+find_library(SECURITY_LIBRARY Security REQUIRED)
 
 # Specify the output directory for the library
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 
+# Check for Dobby dependency (optional)
+find_package(Dobby QUIET)
+if(NOT Dobby_FOUND)
+    message(STATUS "Dobby library not found. Building without hooking functionality.")
+    add_definitions(-DNO_DOBBY_HOOKS)
+endif()
+
+# Set AI feature options - now using local training only
+option(ENABLE_AI_FEATURES "Enable AI features" ON)
+option(ENABLE_LOCAL_TRAINING "Enable local AI model training" ON)
+
 # Collect all source files
 file(GLOB_RECURSE LUA_SOURCES source/lfs.c)
 
+# Main C++ sources
 file(GLOB_RECURSE CPP_SOURCES 
     source/library.cpp
     source/cpp/*.cpp
 )
 
+# Objective-C++ sources
 file(GLOB_RECURSE MM_SOURCES 
     source/cpp/ios/*.mm
     source/cpp/ios/ui/*.mm
     source/cpp/ios/advanced_bypass/*.mm
-    source/cpp/ios/ai_features/*.mm
 )
+
+# AI feature sources
+if(ENABLE_AI_FEATURES)
+    file(GLOB_RECURSE AI_SOURCES
+        source/cpp/ios/ai_features/*.mm
+        source/cpp/ios/ai_features/local_models/*.mm
+        source/cpp/ios/ai_features/vulnerability_detection/*.mm
+    )
+endif()
+
+# Remove any duplicate files
+list(REMOVE_DUPLICATES MM_SOURCES)
+if(ENABLE_AI_FEATURES)
+    list(REMOVE_DUPLICATES AI_SOURCES)
+endif()
 
 # Combine all sources
 set(SOURCES
@@ -49,6 +79,11 @@ set(SOURCES
     ${CPP_SOURCES}
     ${MM_SOURCES}
 )
+
+# Add AI sources if enabled
+if(ENABLE_AI_FEATURES)
+    list(APPEND SOURCES ${AI_SOURCES})
+endif()
 
 # Define the library
 add_library(roblox_executor SHARED ${SOURCES})
@@ -67,6 +102,18 @@ target_compile_definitions(roblox_executor PRIVATE
     _DARWIN_C_SOURCE=1
 )
 
+# Add AI-specific definitions
+if(ENABLE_AI_FEATURES)
+    target_compile_definitions(roblox_executor PRIVATE
+        ENABLE_AI_FEATURES=1
+        ENABLE_LOCAL_TRAINING=1
+    )
+else()
+    target_compile_definitions(roblox_executor PRIVATE
+        ENABLE_AI_FEATURES=0
+    )
+endif()
+
 # Include directories
 target_include_directories(roblox_executor PRIVATE 
     ${LUA_INCLUDE_DIR} 
@@ -75,6 +122,11 @@ target_include_directories(roblox_executor PRIVATE
     source/cpp/ios
 )
 
+# Add Dobby include if found
+if(Dobby_FOUND)
+    target_include_directories(roblox_executor PRIVATE ${Dobby_INCLUDE_DIRS})
+endif()
+
 # Link against required libraries
 target_link_libraries(roblox_executor PRIVATE
     ${LUA_LIBRARIES}
@@ -82,36 +134,30 @@ target_link_libraries(roblox_executor PRIVATE
     "-framework UIKit"
     "-framework WebKit"
     "-framework CoreGraphics"
+    "-framework CoreFoundation"
+    "-framework JavaScriptCore"
+    "-framework Security"
 )
 
-# Add CoreML if available
-if(COREML_LIBRARY)
-    target_link_libraries(roblox_executor PRIVATE "-framework CoreML")
-    target_compile_definitions(roblox_executor PRIVATE HAS_CORE_ML=1)
-else()
-    target_compile_definitions(roblox_executor PRIVATE HAS_CORE_ML=0)
+# Add Dobby if found
+if(Dobby_FOUND)
+    target_link_libraries(roblox_executor PRIVATE ${Dobby_LIBRARIES})
 endif()
 
-# Copy required resources
-add_custom_command(TARGET roblox_executor POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roblox_executor>/Resources/Models"
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/Resources/Models"
-        "$<TARGET_FILE_DIR:roblox_executor>/Resources/Models"
-    COMMENT "Copying AI models and resources to output directory"
-)
+# Create required directories for AI data
+if(ENABLE_AI_FEATURES)
+    add_custom_command(TARGET roblox_executor POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roblox_executor>/Resources/AIData"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roblox_executor>/Resources/AIData/LocalModels"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roblox_executor>/Resources/AIData/Vulnerabilities"
+        COMMENT "Creating AI data directories"
+    )
+endif()
 
 # Install the dylib
 install(TARGETS roblox_executor
     LIBRARY DESTINATION lib
     RUNTIME DESTINATION bin
-)
-
-# Add additional iOS framework dependencies
-target_link_libraries(roblox_executor PRIVATE
-    "-framework CoreFoundation"
-    "-framework JavaScriptCore"
-    "-framework Security"
 )
 
 # Set build options for iOS
